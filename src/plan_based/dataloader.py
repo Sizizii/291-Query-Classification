@@ -47,7 +47,7 @@ class workload_dataloader():
         return self.sql_forest
 
 if __name__ == "__main__":
-    filename = "../../datasets/plans/parsed/workload_5k_s1_c8220.json"
+    filename = "../runs/deepdb_augmented/accidents/workload_100k_s1_c8220.json"
     workload = workload_dataloader(filename)
     tree = workload.get_data()[0]
     print(len(tree.root.children[0].children[0].children[0].children))
