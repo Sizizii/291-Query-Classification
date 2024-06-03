@@ -108,9 +108,9 @@ class Network(nn.Module):
                 # self.optimizer.zero_grad()
                 
                 avg_loss += loss
-                if batch % 500 == 0:
+                if batch % 20 == 0:
                     print(output)
-                    print(avg_loss/500)
+                    print(avg_loss/20)
                     avg_loss = 0
 
         return
@@ -204,7 +204,7 @@ class Network(nn.Module):
             mapping_pad = result[5]
 
             output:torch.Tensor = self.forward(op_pad, attr_pad, filter_pad, output_pad, np.array(mapping_pad)).T[0]
-            if output < 3000:
+            if output <= 0.5:
                 out_list.append(0)
             else:
                 out_list.append(1)
@@ -222,7 +222,7 @@ trees = dataloader.get_data()
 
 file_name = "../../../datasets/stats/stat_complete.json"
 network = Network(trees=trees, file_name=file_name).to(device)
-network.train(1, 50)
+network.train(10, 50)
 torch.save(network.state_dict(), 'model.pth')
 acc = network.model_test()
 
