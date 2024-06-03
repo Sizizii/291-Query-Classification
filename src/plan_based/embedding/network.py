@@ -50,28 +50,33 @@ class Network(nn.Module):
         self.filter_op_id_map = filter_op_id_map
         
         self.target_runtime = torch.tensor(target_runtime, dtype=torch.float32).to(device)
-        self.labels = torch.tensor(labels, dtype=torch.float32).to(device)
-        self.hidden_dim = 20
-        self.trees = trees
+        self.labels = torch.tensor(labels, dtype=torch.float32).to(device)[:4000]
+        self.hidden_dim = 128
+        self.squeeze_dim = 32
+        self.trees = trees[:4000]
+        self.test = trees[4000:]
+        self.test_labels = torch.tensor(labels, dtype=torch.float32).to(device)[4000:]
         
-        self.filter_linear = nn.Linear(batch_filter_pad.shape[-1], self.hidden_dim, dtype=torch.float32)
-        self.output_linear = nn.Linear(batch_output_pad.shape[-1], self.hidden_dim, dtype=torch.float32)
-        self.batch_norm1 = nn.BatchNorm1d(self.hidden_dim)
-        self.batch_norm2 = nn.BatchNorm1d(self.hidden_dim)
-        self.relu = nn.ReLU()
+        self.filter_linear = nn.Linear(batch_filter_pad.shape[-1], self.squeeze_dim, dtype=torch.float32)
+        self.output_linear = nn.Linear(batch_output_pad.shape[-1], self.squeeze_dim, dtype=torch.float32)
+        self.batch_norm1 = nn.BatchNorm1d(self.squeeze_dim)
+        self.batch_norm2 = nn.BatchNorm1d(self.squeeze_dim)
+        self.relu = nn.LeakyReLU()
         self.sigmoid = nn.Sigmoid()
-        self.lstm = nn.LSTM(input_size=2*self.hidden_dim + batch_op_pad.shape[-1] + batch_attr_pad.shape[-1], hidden_size=self.hidden_dim, batch_first=True)
+        self.lstm = nn.LSTM(input_size=2*self.squeeze_dim + batch_op_pad.shape[-1] + batch_attr_pad.shape[-1], hidden_size=self.hidden_dim, batch_first=True)
 
     def _adding_network(self):
-        self.final_linear1 = nn.Linear(self.hidden_dim, 1, dtype=torch.float32).to(device)
+        self.final_linear1 = nn.Linear(self.hidden_dim, 20, dtype=torch.float32).to(device)
+        self.final_linear2 = nn.Linear(20, 1, dtype=torch.float32).to(device)
 
     def train(self, batch_size, num_epoch):
         self.batch_size = batch_size
         self._adding_network()
-        self.optimizer = optim.SGD(self.parameters(), lr=0.1)
+        self.optimizer = optim.SGD(self.parameters(), lr=0.01)
         num_batch = len(self.trees) / batch_size
         avg_loss = 0
         for epoch in range(num_epoch):
+            print("epoch", epoch)
             for batch in range(int(num_batch)):
                 labels = self.labels[batch_size*batch : batch_size*(batch+1)]
                 runtime = self.target_runtime[batch_size*batch : batch_size*(batch+1)]
@@ -95,15 +100,16 @@ class Network(nn.Module):
                 mapping_pad = result[5]
 
                 output:torch.Tensor = self.forward(op_pad, attr_pad, filter_pad, output_pad, np.array(mapping_pad)).T[0]
-                loss = self.MSE_Loss(output, runtime)
+                loss = self.Cross_Entropy(output, labels)
                 # loss = self.Cross_Entropy(output, labels)
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
                 # self.optimizer.zero_grad()
                 
-                avg_loss += loss ** 0.5
+                avg_loss += loss
                 if batch % 500 == 0:
+                    print(output)
                     print(avg_loss/500)
                     avg_loss = 0
 
@@ -119,9 +125,9 @@ class Network(nn.Module):
         inter_filter_pad = filter_pad.view(x_filter*y_filter, z_filter)
         inter_output_pad = output_pad.view(x_output*y_output, z_output)
         filter_dense:torch.Tensor = self.relu(self.filter_linear(inter_filter_pad))
-        # filter_dense = self.batch_norm1(filter_dense)
+        filter_dense = self.batch_norm1(filter_dense)
         output_dense:torch.Tensor = self.relu(self.output_linear(inter_output_pad))
-        # output_dense = self.batch_norm2(output_dense)
+        output_dense = self.batch_norm2(output_dense)
 
         filter_pad = filter_dense.view(x_filter, y_filter, -1)
         output_pad = output_dense.view(x_output, y_output, -1)
@@ -154,7 +160,8 @@ class Network(nn.Module):
         output = h_t_1[0]
         output = output[:self.batch_size]
         output = self.final_linear1(output)
-        # output = self.sigmoid(output)
+        output = self.final_linear2(output)
+        output = self.sigmoid(output)
         
         return output
     
@@ -165,6 +172,48 @@ class Network(nn.Module):
         bce_loss = - (labels * torch.log(output) + (1 - labels) * torch.log(1 - output))
         mean_loss = bce_loss.mean()
         return mean_loss
+    
+    def model_test(self):
+        self.batch_size = 1
+        self._adding_network()
+        batch_size = 1
+        test_set = self.test
+        labels = self.test_labels
+        num_batch = len(test_set) / batch_size
+        out_list = []
+        acc = 0
+
+        for batch in range(int(num_batch)):
+            sub_trees = self.trees[batch_size*batch : batch_size*(batch+1)]
+            result = batch_embed(sub_trees, 
+                            max_filter=5, 
+                            num_filter_attr=14, 
+                            op_stats=self.op_stats, 
+                            col_id_map=self.col_id_map,
+                            col_stats=self.col_stats,
+                            table_id_map=self.table_id_map,
+                            table_stats=self.table_stats,
+                            type_id_map=self.type_id_map,
+                            filter_op_id_map=self.filter_op_id_map,
+                            num_attr=4)
+            
+            op_pad = torch.tensor(result[1], dtype=torch.float32).to(device)
+            attr_pad = torch.tensor(result[2], dtype=torch.float32).to(device)
+            filter_pad = torch.tensor(result[3], dtype=torch.float32).to(device)
+            output_pad = torch.tensor(result[4], dtype=torch.float32).to(device)
+            mapping_pad = result[5]
+
+            output:torch.Tensor = self.forward(op_pad, attr_pad, filter_pad, output_pad, np.array(mapping_pad)).T[0]
+            if output < 3000:
+                out_list.append(0)
+            else:
+                out_list.append(1)
+        
+        for i in range (int(num_batch)):
+            if out_list[i] == labels[i]:
+                acc += 1
+
+        return acc / num_batch
 
 # Get the tree data.
 filename = "../../../datasets/plans/parsed/workload_5k_s1_c8220.json"
@@ -174,6 +223,11 @@ trees = dataloader.get_data()
 file_name = "../../../datasets/stats/stat_complete.json"
 network = Network(trees=trees, file_name=file_name).to(device)
 network.train(1, 50)
+torch.save(network.state_dict(), 'model.pth')
+acc = network.model_test()
+
+print(acc)
+
 
 # with open("../../../datasets/stats/stat_complete.json", "r") as f:
 #     col_id_map, col_stats, table_id_map, table_stats, type_id_map, op_stats, filter_op_id_map = json.load(f)

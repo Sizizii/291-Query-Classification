@@ -1,5 +1,6 @@
 import numpy as np
 import re
+import pdb
 
 def node_embed(node_param, max_filter, num_filter_attr, op_stats, col_id_map, col_stats, table_id_map, table_stats, type_id_map, filter_op_id_map, num_attr):
 
@@ -31,6 +32,8 @@ def node_embed(node_param, max_filter, num_filter_attr, op_stats, col_id_map, co
     filters = node_param['filter_columns']
     if filters['operator'] == "AND":
       filters = node_param['filter_columns']['children']
+    else:
+      filters = [filters]
 
     for fil in filters:
       # vector includes:

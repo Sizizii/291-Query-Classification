@@ -1,4 +1,5 @@
-from src.plan_based.embedding.plan_embedding import *
+# from src.plan_based.embedding.plan_embedding import *
+from plan_embedding import *
 
 def _batch_merge_vec(batch_vec, plan_vec):
   # if plan has larger number of levels, create a new level list and append
@@ -13,7 +14,7 @@ def _batch_merge_mapping(batch_map, plan_map):
   for level, level_map in enumerate(plan_map):
     if level >= len(batch_map):
       batch_map.append([])
-    
+
     # to find if there are preceding parent nodes on the same level
     # if found, should increments its children node mapping (on next level)
     if level < len(batch_map) - 1:

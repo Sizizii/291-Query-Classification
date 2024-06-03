@@ -1,4 +1,5 @@
-from src.plan_based.embedding.node_embedding import *
+# from src.plan_based.embedding.node_embedding import *
+from node_embedding import *
 from collections import deque
 
 def plan_embed(root_node, max_filter, num_filter_attr, op_stats, col_id_map, col_stats, table_id_map, table_stats, type_id_map, filter_op_id_map, num_attr):
@@ -32,7 +33,7 @@ def plan_embed(root_node, max_filter, num_filter_attr, op_stats, col_id_map, col
       if len(node.children) == 2:
         plan_mapping[-1].append([child.idx + children_sum for child in node.children])
       elif len(node.children) == 1:
-        plan_mapping[-1].append([node.children[0].idx, 0])
+        plan_mapping[-1].append([node.children[0].idx + children_sum , 0])
       else:
         plan_mapping[-1].append([0,0])
 
