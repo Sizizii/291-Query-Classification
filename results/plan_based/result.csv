@@ -1,0 +1,5 @@
+,Accuracy,Precision,Recall,Time required
+All filter information without dimension reduction 5k,84.5,81.44,76.96,5.77ms
+All filter information without dimension reduction 10k,86.1,82.4,82.3,5.79ms
+One-hot information with dimension reduction 5k,87.2,83.77,82.46,5.46ms
+One-hot information with dimension reduction 10k,90.8,87.37,88.74,5.57ms

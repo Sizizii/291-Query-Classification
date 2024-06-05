@@ -6,6 +6,7 @@ import torch.optim as optim
 from batch_embedding import batch_embed
 from dataloader import workload_dataloader
 import pdb
+import time
 
 device = (
     "cuda"
@@ -50,29 +51,30 @@ class Network(nn.Module):
         self.filter_op_id_map = filter_op_id_map
         
         self.target_runtime = torch.tensor(target_runtime, dtype=torch.float32).to(device)
-        self.labels = torch.tensor(labels, dtype=torch.float32).to(device)[:4000]
+        self.labels = torch.tensor(labels, dtype=torch.float32).to(device)[:9000]
         self.hidden_dim = 128
         self.squeeze_dim = 32
-        self.trees = trees[:4000]
-        self.test = trees[4000:]
-        self.test_labels = torch.tensor(labels, dtype=torch.float32).to(device)[4000:]
+        self.trees = trees[:9000]
+        self.test = trees[9000:]
+        self.test_labels = torch.tensor(labels, dtype=torch.float32).to(device)[9000:]
         
         self.filter_linear = nn.Linear(batch_filter_pad.shape[-1], self.squeeze_dim, dtype=torch.float32)
+        # self.filter_linear = nn.Linear(66, self.squeeze_dim, dtype=torch.float32)
         self.output_linear = nn.Linear(batch_output_pad.shape[-1], self.squeeze_dim, dtype=torch.float32)
+        self.total_linear = nn.Linear(2*self.squeeze_dim + batch_op_pad.shape[-1] + batch_attr_pad.shape[-1], 2*self.squeeze_dim + batch_op_pad.shape[-1] + batch_attr_pad.shape[-1], dtype=torch.float32)
         self.batch_norm1 = nn.BatchNorm1d(self.squeeze_dim)
         self.batch_norm2 = nn.BatchNorm1d(self.squeeze_dim)
+        self.batch_norm3 = nn.BatchNorm1d(self.hidden_dim)
         self.relu = nn.LeakyReLU()
         self.sigmoid = nn.Sigmoid()
-        self.lstm = nn.LSTM(input_size=2*self.squeeze_dim + batch_op_pad.shape[-1] + batch_attr_pad.shape[-1], hidden_size=self.hidden_dim, batch_first=True)
-
-    def _adding_network(self):
-        self.final_linear1 = nn.Linear(self.hidden_dim, 20, dtype=torch.float32).to(device)
-        self.final_linear2 = nn.Linear(20, 1, dtype=torch.float32).to(device)
+        self.lstm = nn.LSTM(input_size= batch_filter_pad.shape[-1] + self.squeeze_dim + batch_op_pad.shape[-1] + batch_attr_pad.shape[-1], hidden_size=self.hidden_dim, batch_first=True)
+        self.final_linear1 = nn.Linear(self.hidden_dim, 32, dtype=torch.float32).to(device)
+        self.final_linear2 = nn.Linear(32, 1, dtype=torch.float32).to(device)
 
     def train(self, batch_size, num_epoch):
         self.batch_size = batch_size
-        self._adding_network()
-        self.optimizer = optim.SGD(self.parameters(), lr=0.01)
+        # self._adding_network()
+        self.optimizer = optim.Adam(self.parameters(), lr=0.001)
         num_batch = len(self.trees) / batch_size
         avg_loss = 0
         for epoch in range(num_epoch):
@@ -108,14 +110,20 @@ class Network(nn.Module):
                 # self.optimizer.zero_grad()
                 
                 avg_loss += loss
-                if batch % 20 == 0:
+                if batch % 50 == 0:
                     print(output)
-                    print(avg_loss/20)
+                    print(avg_loss/50)
                     avg_loss = 0
 
         return
 
     def forward(self, op_pad:torch.Tensor, attr_pad:torch.Tensor, filter_pad:torch.Tensor, output_pad:torch.Tensor, mapping_pad:np.ndarray):
+        # x_op = op_pad.shape[0]
+        # y_op = op_pad.shape[1]
+        # z_op = op_pad.shape[2]
+        # x_attr = attr_pad.shape[0]
+        # y_attr = attr_pad.shape[1]
+        # z_attr = attr_pad.shape[2]
         x_filter = filter_pad.shape[0]
         y_filter = filter_pad.shape[1]
         z_filter = filter_pad.shape[2]
@@ -124,14 +132,20 @@ class Network(nn.Module):
         z_output = output_pad.shape[2]
         inter_filter_pad = filter_pad.view(x_filter*y_filter, z_filter)
         inter_output_pad = output_pad.view(x_output*y_output, z_output)
-        filter_dense:torch.Tensor = self.relu(self.filter_linear(inter_filter_pad))
-        filter_dense = self.batch_norm1(filter_dense)
+
+        # filter_dense = 0
+        # for i in range(5):
+        #     filter_dense:torch.Tensor = filter_dense + self.batch_norm1(self.relu(self.filter_linear(inter_filter_pad[:,66*i:66*(i+1)])))
+
+        # filter_dense:torch.Tensor = self.relu(self.filter_linear(inter_filter_pad))
+        # filter_dense = self.batch_norm1(filter_dense)
         output_dense:torch.Tensor = self.relu(self.output_linear(inter_output_pad))
         output_dense = self.batch_norm2(output_dense)
 
-        filter_pad = filter_dense.view(x_filter, y_filter, -1)
+        # filter_pad = filter_dense.view(x_filter, y_filter, -1)
         output_pad = output_dense.view(x_output, y_output, -1)
         lstm_input = torch.cat((op_pad, attr_pad, filter_pad, output_pad), dim=2)
+        # lstm_input = self.total_linear(lstm_input)
         num_layer = lstm_input.shape[0]
         inner_batch_size = lstm_input.shape[1]
         layer = num_layer
@@ -159,6 +173,7 @@ class Network(nn.Module):
 
         output = h_t_1[0]
         output = output[:self.batch_size]
+        # output = self.batch_norm3(output)
         output = self.final_linear1(output)
         output = self.final_linear2(output)
         output = self.sigmoid(output)
@@ -175,7 +190,7 @@ class Network(nn.Module):
     
     def model_test(self):
         self.batch_size = 1
-        self._adding_network()
+        # self._adding_network()
         batch_size = 1
         test_set = self.test
         labels = self.test_labels
@@ -183,8 +198,9 @@ class Network(nn.Module):
         out_list = []
         acc = 0
 
+        start_time = time.time()
         for batch in range(int(num_batch)):
-            sub_trees = self.trees[batch_size*batch : batch_size*(batch+1)]
+            sub_trees = test_set[batch_size*batch : batch_size*(batch+1)]
             result = batch_embed(sub_trees, 
                             max_filter=5, 
                             num_filter_attr=14, 
@@ -209,21 +225,29 @@ class Network(nn.Module):
             else:
                 out_list.append(1)
         
+        end_time = time.time()
+        total_positive = sum(labels)
+        true_positive = 0
+        predicted_total_positive = sum(out_list)
+
         for i in range (int(num_batch)):
             if out_list[i] == labels[i]:
                 acc += 1
+                if out_list[i] == 1:
+                    true_positive += 1
 
-        return acc / num_batch
+        return acc / num_batch, true_positive / total_positive, true_positive / predicted_total_positive, (end_time - start_time)
 
 # Get the tree data.
-filename = "../../../datasets/plans/parsed/workload_5k_s1_c8220.json"
+filename = "../../../datasets/plans/parsed/workload_10k_s1_c8220.json"
 dataloader = workload_dataloader(filename=filename)
 trees = dataloader.get_data()
 
 file_name = "../../../datasets/stats/stat_complete.json"
 network = Network(trees=trees, file_name=file_name).to(device)
-network.train(10, 50)
-torch.save(network.state_dict(), 'model.pth')
+# network.load_state_dict(torch.load("model1.pth"))
+network.train(10, 10)
+torch.save(network.state_dict(), 'model2.pth')
 acc = network.model_test()
 
 print(acc)
